@@ -1,0 +1,333 @@
+import pygame
+import random
+import time
+import string
+
+# Initialize Pygame
+pygame.init()
+
+# Constants
+WINDOW_WIDTH = 800
+WINDOW_HEIGHT = 600
+FPS = 60
+
+# Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+RED = (255, 0, 0)
+BROWN = (139, 69, 19)
+
+# Player properties
+PLAYER_WIDTH = 30
+PLAYER_HEIGHT = 30
+PLAYER_SPEED = 5
+JUMP_VELOCITY = -15
+GRAVITY = 0.8
+
+# Platform properties
+PLATFORM_LIST = [
+    (0, WINDOW_HEIGHT - 40, 200, 40),
+    (250, WINDOW_HEIGHT - 120, 200, 20),
+    (500, WINDOW_HEIGHT - 200, 200, 20),
+    (200, WINDOW_HEIGHT - 280, 200, 20),
+    (450, WINDOW_HEIGHT - 360, 200, 20),
+    (100, WINDOW_HEIGHT - 440, 200, 20),
+    (600, WINDOW_HEIGHT - 440, 200, 20),
+]
+
+# Door properties
+DOOR_WIDTH = 40
+DOOR_HEIGHT = 60
+DOOR_X = WINDOW_WIDTH - DOOR_WIDTH - 10
+DOOR_Y = WINDOW_HEIGHT - 440 - DOOR_HEIGHT
+
+# NPC properties
+NPC_WIDTH = 30
+NPC_HEIGHT = 30
+NPC_SPEED = 2
+
+class Player(pygame.sprite.Sprite):
+    def __init__(self):
+        super().__init__()
+        self.image = pygame.Surface([PLAYER_WIDTH, PLAYER_HEIGHT])
+        self.image.fill(BLACK)
+        self.rect = self.image.get_rect()
+        self.rect.x = 50
+        self.rect.y = WINDOW_HEIGHT - 100
+        self.velocity_y = 0
+        self.is_jumping = False
+        self.current_platform = None
+
+    def update(self, platforms):
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_LEFT]:
+            self.rect.x -= PLAYER_SPEED
+        if keys[pygame.K_RIGHT]:
+            self.rect.x += PLAYER_SPEED
+
+        # Store previous position for platform detection
+        previous_bottom = self.rect.bottom
+
+        # Apply gravity
+        self.velocity_y += GRAVITY
+        self.rect.y += self.velocity_y
+
+        # Reset current platform
+        self.current_platform = None
+
+        # Check for collisions with platforms
+        for platform in platforms:
+            if self.rect.colliderect(platform):
+                if self.velocity_y > 0 and previous_bottom <= platform.top:  # Falling
+                    self.rect.bottom = platform.top
+                    self.velocity_y = 0
+                    self.is_jumping = False
+                    self.current_platform = platform
+                elif self.velocity_y < 0:  # Jumping
+                    self.rect.top = platform.bottom
+                    self.velocity_y = 0
+
+        # Keep player in bounds
+        if self.rect.left < 0:
+            self.rect.left = 0
+        if self.rect.right > WINDOW_WIDTH:
+            self.rect.right = WINDOW_WIDTH
+        if self.rect.top < 0:
+            self.rect.top = 0
+
+        # Check if player touched the floor
+        if self.rect.bottom > WINDOW_HEIGHT - 40:
+            self.rect.x = 50
+            self.rect.y = WINDOW_HEIGHT - 100
+            self.velocity_y = 0
+
+    def jump(self):
+        if not self.is_jumping:
+            self.velocity_y = JUMP_VELOCITY
+            self.is_jumping = True
+
+class NPC(pygame.sprite.Sprite):
+    def __init__(self, x, y, platform):
+        super().__init__()
+        self.image = pygame.Surface([NPC_WIDTH, NPC_HEIGHT])
+        self.image.fill(RED)
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y - NPC_HEIGHT
+        self.platform = platform
+        self.direction = 1
+        self.message = random.choice([
+            "Keep going!",
+            "You're doing great!",
+            "Almost there!",
+            "Don't give up!",
+        ])
+        self.speed = NPC_SPEED
+
+    def update(self):
+        self.rect.x += self.speed * self.direction
+        if self.rect.right > self.platform.right or self.rect.left < self.platform.left:
+            self.direction *= -1
+
+class Game:
+    def __init__(self):
+        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        pygame.display.set_caption("Metroidvania Version Alpha")
+        self.clock = pygame.time.Clock()
+        self.font = pygame.font.Font(None, 36)
+        self.state = "menu"
+        self.door_rect = pygame.Rect(DOOR_X, DOOR_Y, DOOR_WIDTH, DOOR_HEIGHT)
+        self.password_input = ""
+        self.password_active = False
+        self.reset_game()
+
+    def reset_game(self):
+        self.player = Player()
+        self.platforms = [pygame.Rect(x, y, w, h) for x, y, w, h in PLATFORM_LIST]
+        self.npcs = pygame.sprite.Group()
+        self.password = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+        self.password_npc = None
+        self.setup_npcs()
+        self.start_time = None
+        self.game_duration = 120  # 2 minutes
+        self.password_input = ""
+        self.password_active = False
+
+    def setup_npcs(self):
+        for platform in self.platforms[1:]:  # Skip the ground platform
+            npc = NPC(platform.x + 50, platform.y - NPC_HEIGHT, platform)
+            self.npcs.add(npc)
+        
+        # Choose a random NPC to have the password
+        self.password_npc = random.choice(list(self.npcs.sprites()))
+        self.password_npc.message = f"The password is: {self.password}"
+
+    def run(self):
+        running = True
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.KEYDOWN:
+                    if self.state == "game":
+                        if event.key == pygame.K_SPACE:
+                            self.player.jump()
+                        elif event.key == pygame.K_i:
+                            self.check_npc_interaction()
+                        elif self.password_active:
+                            if event.key == pygame.K_RETURN:
+                                self.check_password()
+                            elif event.key == pygame.K_BACKSPACE:
+                                self.password_input = self.password_input[:-1]
+                            elif len(self.password_input) < 4:
+                                self.password_input += event.unicode.upper()
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    self.handle_click(event.pos)
+
+            self.update()
+            self.draw()
+            self.clock.tick(FPS)
+
+        pygame.quit()
+
+    def update(self):
+        if self.state == "game":
+            if self.start_time is None:
+                self.start_time = time.time()
+            
+            self.player.update(self.platforms)
+            self.npcs.update()
+            
+            # Check for door collision
+            if self.player.rect.colliderect(self.door_rect):
+                self.password_active = True
+            else:
+                self.password_active = False
+            
+            # Check time
+            elapsed_time = time.time() - self.start_time
+            if elapsed_time >= self.game_duration:
+                self.state = "die"
+
+    def draw(self):
+        self.screen.fill(WHITE)
+
+        if self.state == "menu":
+            self.draw_menu()
+        elif self.state == "game":
+            self.draw_game()
+        elif self.state == "die":
+            self.draw_die_screen()
+        elif self.state == "win":
+            self.draw_win_screen()
+
+        pygame.display.flip()
+
+    def draw_menu(self):
+        title = self.font.render("Welcome to Metroidvania Version Alpha", True, BLACK)
+        subtitle = self.font.render("You need to get the treasure in 2min to win.", True, BLACK)
+        start_button = pygame.Rect(300, 400, 200, 50)
+        pygame.draw.rect(self.screen, BLACK, start_button)
+        button_text = self.font.render("Start Game", True, WHITE)
+        
+        self.screen.blit(title, (WINDOW_WIDTH//2 - title.get_width()//2, 200))
+        self.screen.blit(subtitle, (WINDOW_WIDTH//2 - subtitle.get_width()//2, 250))
+        self.screen.blit(button_text, (400 - button_text.get_width()//2, 415))
+
+    def draw_game(self):
+        # Draw platforms
+        for platform in self.platforms:
+            pygame.draw.rect(self.screen, BLACK, platform)
+        
+        # Draw door
+        pygame.draw.rect(self.screen, BROWN, self.door_rect)
+        
+        # Draw player and NPCs
+        self.screen.blit(self.player.image, self.player.rect)
+        self.npcs.draw(self.screen)
+        
+        # Draw timer
+        if self.start_time is not None:
+            elapsed_time = time.time() - self.start_time
+            remaining_time = max(0, self.game_duration - elapsed_time)
+            timer_text = self.font.render(f"Time: {int(remaining_time)}s", True, BLACK)
+            self.screen.blit(timer_text, (10, 10))
+
+        # Draw password input if active
+        if self.password_active:
+            password_surface = pygame.Surface((200, 50))
+            password_surface.fill(WHITE)
+            pygame.draw.rect(password_surface, BLACK, password_surface.get_rect(), 2)
+            text = self.font.render(self.password_input, True, BLACK)
+            password_surface.blit(text, (10, 10))
+            self.screen.blit(password_surface, (WINDOW_WIDTH//2 - 100, WINDOW_HEIGHT//2 - 25))
+
+    def draw_die_screen(self):
+        text = self.font.render("Time's up! Try again?", True, BLACK)
+        retry_button = pygame.Rect(300, 400, 200, 50)
+        pygame.draw.rect(self.screen, BLACK, retry_button)
+        button_text = self.font.render("Retry", True, WHITE)
+        
+        self.screen.blit(text, (WINDOW_WIDTH//2 - text.get_width()//2, 200))
+        self.screen.blit(button_text, (400 - button_text.get_width()//2, 415))
+
+    def draw_win_screen(self):
+        text = self.font.render("Congratulations! You won!", True, BLACK)
+        menu_button = pygame.Rect(300, 400, 200, 50)
+        pygame.draw.rect(self.screen, BLACK, menu_button)
+        button_text = self.font.render("Back to Menu", True, WHITE)
+        
+        self.screen.blit(text, (WINDOW_WIDTH//2 - text.get_width()//2, 200))
+        self.screen.blit(button_text, (400 - button_text.get_width()//2, 415))
+
+    def handle_click(self, pos):
+        if self.state == "menu":
+            button = pygame.Rect(300, 400, 200, 50)
+            if button.collidepoint(pos):
+                self.state = "game"
+                self.reset_game()
+        elif self.state in ["die", "win"]:
+            button = pygame.Rect(300, 400, 200, 50)
+            if button.collidepoint(pos):
+                self.state = "menu"
+
+    def check_password(self):
+        if self.password_input == self.password:
+            self.state = "win"
+        self.password_input = ""
+
+    def check_npc_interaction(self):
+        for npc in self.npcs:
+            # Check if player is on the same platform as the NPC
+            if (self.player.current_platform == npc.platform and 
+                abs(self.player.rect.centerx - npc.rect.centerx) < 50):
+                # Draw speech bubble
+                bubble_surface = pygame.Surface((200, 50))
+                bubble_surface.fill(WHITE)
+                pygame.draw.rect(bubble_surface, BLACK, bubble_surface.get_rect(), 2)
+                
+                # Wrap text
+                words = npc.message.split()
+                lines = []
+                line = ""
+                for word in words:
+                    test_line = line + word + " "
+                    test_surface = self.font.render(test_line, True, BLACK)
+                    if test_surface.get_width() < 190:
+                        line = test_line
+                    else:
+                        lines.append(line)
+                        line = word + " "
+                lines.append(line)
+                
+                for i, line in enumerate(lines):
+                    text_surface = self.font.render(line, True, BLACK)
+                    bubble_surface.blit(text_surface, (5, 5 + i * 20))
+                
+                self.screen.blit(bubble_surface, (npc.rect.centerx - 100, npc.rect.top - 60))
+                pygame.display.flip()
+                pygame.time.wait(2000)  # Show message for 2 seconds
+
+if __name__ == "__main__":
+    game = Game()
+    game.run()
